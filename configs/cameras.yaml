@@ -1,0 +1,31 @@
+model:
+  weights: yolo11n.pt
+  conf: 0.35
+  iou: 0.5
+  imgsz: 640
+  device: 0
+  classes: [0]
+
+tracker: bytetrack.yaml
+
+api:
+  host: 0.0.0.0
+  port: 8000
+
+cameras:
+  - id: checkout-1
+    source: data/samples/store.mp4
+    zones:
+      - name: queue
+        type: queue
+        polygon: [[100, 300], [600, 300], [600, 700], [100, 700]]
+      - name: counter
+        type: occupancy
+        polygon: [[650, 250], [1100, 250], [1100, 650], [650, 650]]
+
+  - id: entrance
+    source: rtsp://user:pass@192.168.1.10:554/stream1
+    zones:
+      - name: entry
+        type: occupancy
+        polygon: [[0, 0], [640, 0], [640, 360], [0, 360]]
