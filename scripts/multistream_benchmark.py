@@ -7,41 +7,54 @@ import cv2
 from ultralytics import YOLO
 
 
-def worker(weights: str, source: str, frames: int, imgsz: int, device: str, results: list, idx: int, barrier):
-    model = YOLO(weights, task="detect")
+def load_frames(source: str, n: int) -> list:
     cap = cv2.VideoCapture(source)
-    images = []
-    while len(images) < frames:
+    frames = []
+    while len(frames) < n:
         ok, img = cap.read()
         if not ok:
+            if not frames:
+                raise RuntimeError(f"No frames read from {source}")
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             continue
-        images.append(img)
+        frames.append(img)
     cap.release()
-
-    for img in images[:10]:
-        model.track(img, persist=True, imgsz=imgsz, device=device, classes=[0], verbose=False)
-
-    barrier.wait()
-    t0 = time.perf_counter()
-    for img in images:
-        model.track(img, persist=True, imgsz=imgsz, device=device, classes=[0], verbose=False)
-    results[idx] = len(images) / (time.perf_counter() - t0)
+    return frames
 
 
-def run(weights: str, source: str, streams: int, frames: int, imgsz: int, device: str) -> dict:
+def run(weights: str, frames: list, streams: int, imgsz: int, device: str) -> dict:
+    kwargs = dict(persist=True, tracker="bytetrack.yaml", imgsz=imgsz, device=device, classes=[0], verbose=False)
+
+    models = []
+    for _ in range(streams):
+        model = YOLO(weights, task="detect")
+        for img in frames[:10]:
+            model.track(img, **kwargs)
+        models.append(model)
+
     results: list = [None] * streams
+    errors: list = []
     barrier = threading.Barrier(streams)
-    threads = [
-        threading.Thread(target=worker, args=(weights, source, frames, imgsz, device, results, i, barrier))
-        for i in range(streams)
-    ]
+
+    def worker(idx: int) -> None:
+        try:
+            barrier.wait(timeout=120)
+            t0 = time.perf_counter()
+            for img in frames:
+                models[idx].track(img, **kwargs)
+            results[idx] = len(frames) / (time.perf_counter() - t0)
+        except Exception as e:
+            errors.append(e)
+            barrier.abort()
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(streams)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
-    if any(r is None for r in results):
-        raise RuntimeError("A stream worker failed; see the traceback above")
+    if errors:
+        raise RuntimeError(f"{streams} streams failed: {errors[0]!r}")
+
     return {
         "streams": streams,
         "per_stream_fps": round(min(results), 1),
@@ -58,12 +71,23 @@ def main() -> None:
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--device", default="0")
     parser.add_argument("--target-fps", type=float, default=15.0)
+    parser.add_argument("--output", default="multistream.json")
     args = parser.parse_args()
 
-    report = [run(args.weights, args.source, n, args.frames, args.imgsz, args.device) for n in args.streams]
-    for r in report:
+    frames = load_frames(args.source, args.frames)
+    report = []
+    for n in args.streams:
+        try:
+            r = run(args.weights, frames, n, args.imgsz, args.device)
+        except Exception as e:
+            print(f"Stopping at {n} streams: {e}")
+            break
         r["realtime"] = r["per_stream_fps"] >= args.target_fps
-    print(json.dumps(report, indent=2))
+        report.append(r)
+        print(json.dumps(r), flush=True)
+
+    with open(args.output, "w") as f:
+        json.dump(report, f, indent=2)
 
 
 if __name__ == "__main__":
