@@ -71,10 +71,13 @@ docker run --gpus all -p 8000:8000 -v $(pwd)/configs:/app/configs visionflow
 ```bash
 python scripts/export.py --weights yolo11n.pt --format onnx
 python scripts/export.py --weights yolo11n.pt --format engine --half
-python scripts/benchmark.py --weights models/yolo11n.engine --source data/samples/store.mp4
+python scripts/benchmark.py --weights yolo11n.engine --source data/samples/test.mp4 --data coco_val.yaml
+python scripts/multistream_benchmark.py --weights yolo11n.engine --source data/samples/test.mp4 --streams 1 2 4 8
 ```
 
 ## Benchmarks
+
+Reproduce with [`notebooks/benchmark.ipynb`](notebooks/benchmark.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Altair098/visionflow/blob/main/notebooks/benchmark.ipynb). Accuracy is measured on COCO val2017.
 
 | Model | Backend | Precision | FPS | Latency (ms) | mAP50-95 |
 |---|---|---|---|---|---|
